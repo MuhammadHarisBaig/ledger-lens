@@ -20,4 +20,17 @@ describe("parseAmount", () => {
   it("throws on non-numeric input", () => {
     expect(() => parseAmount("N/A")).toThrow();
   });
+
+  // Sign handling (statements represent money-out with a minus or parentheses).
+  it("parses a leading minus as negative", () => {
+    expect(parseAmount("-1,250.00")).toBe(-1250);
+  });
+
+  it("parses accounting parentheses as negative", () => {
+    expect(parseAmount("(1,250.00)")).toBe(-1250);
+  });
+
+  it("leaves a plain positive amount positive", () => {
+    expect(parseAmount("1,250.00")).toBe(1250);
+  });
 });

@@ -5,12 +5,23 @@ import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateUpload, MAX_UPLOAD_BYTES } from "@/lib/validateUpload";
 import { extractPdfText } from "@/lib/extractPdfText";
+import { parseStatement } from "@/lib/parseStatement";
 
 export const runtime = "nodejs"; // node:crypto + Prisma need the Node runtime, not Edge
 
 function fail(code: string, message: string, status: number) {
   // envelope only — never leak raw errors or stack traces to the client
   return NextResponse.json({ error: { code, message } }, { status });
+}
+
+// Idempotent summary for a statement we're NOT (re)processing this request.
+async function summarize(s: { id: string; status: string }) {
+  const transactionCount = await prisma.transaction.count({ where: { statementId: s.id } });
+  // skippedLines isn't persisted, so it's only meaningful on first processing; report 0 here.
+  return NextResponse.json(
+    { statementId: s.id, status: s.status, transactionCount, skippedLines: 0 },
+    { status: 200 },
+  );
 }
 
 export async function POST(req: Request) {
@@ -50,7 +61,7 @@ export async function POST(req: Request) {
     where: { userId_contentHash: { userId: user.id, contentHash } },
   });
   if (existing) {
-    return NextResponse.json({ statementId: existing.id, status: existing.status }, { status: 200 });
+    return summarize(existing);
   }
 
   let statement;
@@ -67,7 +78,7 @@ export async function POST(req: Request) {
         where: { userId_contentHash: { userId: user.id, contentHash } },
       });
       if (raced) {
-        return NextResponse.json({ statementId: raced.id, status: raced.status }, { status: 200 });
+        return summarize(raced);
       }
     }
     return fail("INTERNAL_ERROR", "Could not process the upload.", 500);
@@ -86,13 +97,42 @@ export async function POST(req: Request) {
     return fail("NO_TEXT", "No extractable text found — scanned/image PDFs aren't supported.", 422);
   }
 
-  // Privacy: return COUNTS only — never the extracted text (sensitive financial data), never log it.
+  // Idempotency guard: only parse a still-UPLOADED statement; an already PROCESSED/FAILED row
+  // must never be re-parsed or double-inserted — return its existing summary instead.
+  if (statement.status !== "UPLOADED") return summarize(statement);
+
+  const parsed = parseStatement(extraction.text);
+
+  // Partial success: 0 parseable lines => FAILED (nothing to insert); surface skippedLines.
+  if (parsed.transactions.length === 0) {
+    await prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } });
+    return NextResponse.json(
+      { statementId: statement.id, status: "FAILED", transactionCount: 0, skippedLines: parsed.skippedLines },
+      { status: 200 },
+    );
+  }
+
+  // Atomic: insert all transactions AND flip status together, so we can never end up with
+  // half-inserted rows or a PROCESSED statement missing its transactions.
+  await prisma.$transaction([
+    prisma.transaction.createMany({
+      data: parsed.transactions.map((t) => ({
+        statementId: statement.id,
+        date: t.date,
+        rawDescription: t.rawDescription,
+        amount: t.amount, // currency defaults to "USD"
+      })),
+    }),
+    prisma.statement.update({ where: { id: statement.id }, data: { status: "PROCESSED" } }),
+  ]);
+
+  // Privacy: counts only — never transaction contents/amounts in the response or logs.
   return NextResponse.json(
     {
       statementId: statement.id,
-      status: statement.status, // UPLOADED — parsing/PROCESSED comes in 2D
-      extractedChars: extraction.text.length,
-      pageCount: extraction.pageCount,
+      status: "PROCESSED",
+      transactionCount: parsed.transactions.length,
+      skippedLines: parsed.skippedLines,
     },
     { status: 201 },
   );
