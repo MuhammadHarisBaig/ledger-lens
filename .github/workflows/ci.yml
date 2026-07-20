@@ -6,6 +6,11 @@ on: [push, pull_request]
 jobs:
   verify:
     runs-on: ubuntu-latest # a clean, throwaway Ubuntu machine
+    env:
+      # `postinstall` runs `prisma generate`, which loads prisma.config.ts and requires
+      # DATABASE_URL to resolve. generate never connects to a DB — this is a throwaway
+      # placeholder, NOT a secret. Real connections use Neon/Vercel env vars.
+      DATABASE_URL: "postgresql://user:password@localhost:5432/ledgerlens?schema=public"
     steps:
       - uses: actions/checkout@v4 # copy your repo onto the runner
       - uses: actions/setup-node@v4
