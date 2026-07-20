@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateUpload, MAX_UPLOAD_BYTES } from "@/lib/validateUpload";
+import { extractPdfText } from "@/lib/extractPdfText";
 
 export const runtime = "nodejs"; // node:crypto + Prisma need the Node runtime, not Edge
 
@@ -52,11 +53,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ statementId: existing.id, status: existing.status }, { status: 200 });
   }
 
+  let statement;
   try {
-    const statement = await prisma.statement.create({
+    statement = await prisma.statement.create({
       data: { userId: user.id, fileName: file.name, contentHash, status: "UPLOADED" },
     });
-    return NextResponse.json({ statementId: statement.id, status: statement.status }, { status: 201 });
   } catch (e) {
     // (b) DB-constraint fallback: a concurrent request may have inserted between our check and
     // this create (TOCTOU race). @@unique([userId, contentHash]) throws P2002 — treat it as
@@ -71,4 +72,28 @@ export async function POST(req: Request) {
     }
     return fail("INTERNAL_ERROR", "Could not process the upload.", 500);
   }
+
+  // M2 sync skeleton: extract text inline. M3 will move this to a background worker.
+  let extraction;
+  try {
+    extraction = await extractPdfText(bytes);
+  } catch {
+    await prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } });
+    return fail("EXTRACTION_FAILED", "Could not read text from the PDF.", 422);
+  }
+  if (!extraction.hasText) {
+    await prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } });
+    return fail("NO_TEXT", "No extractable text found — scanned/image PDFs aren't supported.", 422);
+  }
+
+  // Privacy: return COUNTS only — never the extracted text (sensitive financial data), never log it.
+  return NextResponse.json(
+    {
+      statementId: statement.id,
+      status: statement.status, // UPLOADED — parsing/PROCESSED comes in 2D
+      extractedChars: extraction.text.length,
+      pageCount: extraction.pageCount,
+    },
+    { status: 201 },
+  );
 }
