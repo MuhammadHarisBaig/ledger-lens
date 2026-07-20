@@ -21,7 +21,11 @@ export async function extractPdfText(bytes: Uint8Array): Promise<PdfExtraction> 
 
   try {
     const pdf = await getDocumentProxy(bytes);
-    const { text, totalPages } = await extractText(pdf, { mergePages: true }); // text: string
+    // mergePages:false returns one string PER PAGE with line breaks preserved. (mergePages:true
+    // collapses ALL whitespace incl. newlines via replace(/\s+/g," "), flattening the statement
+    // into a single line — which breaks the line-based parseStatement.) Join pages with newlines.
+    const { text: pages, totalPages } = await extractText(pdf);
+    const text = pages.join("\n");
     return { text, pageCount: totalPages, hasText: text.trim().length > 0 };
   } catch (e) {
     // Don't swallow — surface a typed, message-safe error (no raw internals leak out).

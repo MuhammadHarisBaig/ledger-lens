@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { signOut } from "@/auth";
 
@@ -9,6 +10,9 @@ export default async function DashboardPage() {
       <p>
         Signed in as {user.name} ({user.email})
       </p>
+      <Link href="/statements" className="underline">
+        Go to statements →
+      </Link>
       <form
         action={async () => {
           "use server";
