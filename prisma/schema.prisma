@@ -20,6 +20,7 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
+  statements    Statement[]
   createdAt     DateTime  @default(now())   // audit: when the account was created
   updatedAt     DateTime  @updatedAt        // audit: last profile change
 }
@@ -57,4 +58,39 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+enum StatementStatus {
+  UPLOADED
+  PROCESSING // included now for M3 readiness; sync flow won't set it yet
+  PROCESSED
+  FAILED
+}
+
+model Statement {
+  id           String          @id @default(cuid())
+  userId       String
+  fileName     String // original upload name, for display
+  contentHash  String // hash of file bytes, for idempotency
+  status       StatementStatus @default(UPLOADED)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@unique([userId, contentHash]) // idempotency: same file + same user => no duplicate
+  @@index([userId])
+}
+
+model Transaction {
+  id             String    @id @default(cuid())
+  statementId    String
+  date           DateTime
+  rawDescription String
+  amount         Decimal   @db.Decimal(14, 2) // money as EXACT decimal — never Float
+  currency       String    @default("USD")
+  createdAt      DateTime  @default(now())
+  statement      Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+
+  @@index([statementId])
 }
