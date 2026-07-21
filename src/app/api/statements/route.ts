@@ -4,8 +4,8 @@ import { Prisma } from "@prisma/client";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { validateUpload, MAX_UPLOAD_BYTES } from "@/lib/validateUpload";
-import { extractPdfText } from "@/lib/extractPdfText";
-import { parseStatement } from "@/lib/parseStatement";
+import { getQStashClient } from "@/lib/qstash";
+import { WORKER_PATH } from "@/lib/queue";
 
 export const runtime = "nodejs"; // node:crypto + Prisma need the Node runtime, not Edge
 
@@ -64,76 +64,53 @@ export async function POST(req: Request) {
     return summarize(existing);
   }
 
-  let statement;
+  // Create the Statement (UPLOADED) AND its Job (QUEUED) together, so we never end up with a
+  // Statement that has no Job to track its processing.
+  let statement: { id: string; status: string };
+  let job: { id: string };
   try {
-    statement = await prisma.statement.create({
-      data: { userId: user.id, fileName: file.name, contentHash, status: "UPLOADED" },
-    });
+    ({ statement, job } = await prisma.$transaction(async (tx) => {
+      const statement = await tx.statement.create({
+        data: { userId: user.id, fileName: file.name, contentHash, status: "UPLOADED" },
+      });
+      const job = await tx.job.create({ data: { statementId: statement.id, state: "QUEUED" } });
+      return { statement, job };
+    }));
   } catch (e) {
-    // (b) DB-constraint fallback: a concurrent request may have inserted between our check and
-    // this create (TOCTOU race). @@unique([userId, contentHash]) throws P2002 — treat it as
-    // "already exists" and return that row rather than surfacing an error.
+    // P2002 race: a concurrent request already created this (userId, contentHash). Return the
+    // existing row's summary and do NOT enqueue again.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       const raced = await prisma.statement.findUnique({
         where: { userId_contentHash: { userId: user.id, contentHash } },
       });
-      if (raced) {
-        return summarize(raced);
-      }
+      if (raced) return summarize(raced);
     }
     return fail("INTERNAL_ERROR", "Could not process the upload.", 500);
   }
 
-  // M2 sync skeleton: extract text inline. M3 will move this to a background worker.
-  let extraction;
+  // Publish AFTER the rows exist. The payload carries ONLY identifiers — NEVER file bytes or
+  // extracted text. Financial data must not transit the external queue; the worker (3C) re-reads
+  // it from our own DB/storage. Worker URL is derived from the request origin (no new env var).
+  const workerUrl = new URL(WORKER_PATH, req.url).toString();
   try {
-    extraction = await extractPdfText(bytes);
+    await getQStashClient().publishJSON({
+      url: workerUrl,
+      body: { statementId: statement.id, jobId: job.id },
+    });
   } catch {
-    await prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } });
-    return fail("EXTRACTION_FAILED", "Could not read text from the PDF.", 422);
-  }
-  if (!extraction.hasText) {
-    await prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } });
-    return fail("NO_TEXT", "No extractable text found — scanned/image PDFs aren't supported.", 422);
-  }
-
-  // Idempotency guard: only parse a still-UPLOADED statement; an already PROCESSED/FAILED row
-  // must never be re-parsed or double-inserted — return its existing summary instead.
-  if (statement.status !== "UPLOADED") return summarize(statement);
-
-  const parsed = parseStatement(extraction.text);
-
-  // Partial success: 0 parseable lines => FAILED (nothing to insert); surface skippedLines.
-  if (parsed.transactions.length === 0) {
-    await prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } });
-    return NextResponse.json(
-      { statementId: statement.id, status: "FAILED", transactionCount: 0, skippedLines: parsed.skippedLines },
-      { status: 200 },
-    );
+    // Enqueue failed: don't leave a QUEUED job with no message behind it (a silent stuck state).
+    // Mark both FAILED so the failure is visible and retriable, then surface it.
+    await prisma.$transaction([
+      prisma.job.update({ where: { id: job.id }, data: { state: "FAILED", error: "enqueue_failed" } }),
+      prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } }),
+    ]);
+    return fail("ENQUEUE_FAILED", "Could not queue the statement for processing.", 502);
   }
 
-  // Atomic: insert all transactions AND flip status together, so we can never end up with
-  // half-inserted rows or a PROCESSED statement missing its transactions.
-  await prisma.$transaction([
-    prisma.transaction.createMany({
-      data: parsed.transactions.map((t) => ({
-        statementId: statement.id,
-        date: t.date,
-        rawDescription: t.rawDescription,
-        amount: t.amount, // currency defaults to "USD"
-      })),
-    }),
-    prisma.statement.update({ where: { id: statement.id }, data: { status: "PROCESSED" } }),
-  ]);
-
-  // Privacy: counts only — never transaction contents/amounts in the response or logs.
+  // 202 Accepted: the upload was accepted for asynchronous processing, not completed. Nothing is
+  // parsed yet (Job is QUEUED); the worker (3C) does the actual work.
   return NextResponse.json(
-    {
-      statementId: statement.id,
-      status: "PROCESSED",
-      transactionCount: parsed.transactions.length,
-      skippedLines: parsed.skippedLines,
-    },
-    { status: 201 },
+    { statementId: statement.id, jobId: job.id, status: "queued" },
+    { status: 202 },
   );
 }
