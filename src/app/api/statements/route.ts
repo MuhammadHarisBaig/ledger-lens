@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { validateUpload, MAX_UPLOAD_BYTES } from "@/lib/validateUpload";
 import { getQStashClient } from "@/lib/qstash";
 import { WORKER_PATH } from "@/lib/queue";
+import { putStatementPdf, deleteBlob } from "@/lib/blob";
 
 export const runtime = "nodejs"; // node:crypto + Prisma need the Node runtime, not Edge
 
@@ -64,33 +65,51 @@ export async function POST(req: Request) {
     return summarize(existing);
   }
 
-  // Create the Statement (UPLOADED) AND its Job (QUEUED) together, so we never end up with a
-  // Statement that has no Job to track its processing.
+  // Store the raw PDF FIRST. If this fails we create NO rows — nothing to clean up.
+  let blob: { url: string; pathname: string };
+  try {
+    blob = await putStatementPdf(bytes, file.name);
+  } catch {
+    return fail("STORAGE_FAILED", "Could not store the uploaded file.", 502);
+  }
+
+  // Create the Statement (UPLOADED, with its blob URL) AND its Job (QUEUED) together, so we never
+  // end up with a Statement that has no Job to track its processing.
   let statement: { id: string; status: string };
   let job: { id: string };
   try {
     ({ statement, job } = await prisma.$transaction(async (tx) => {
       const statement = await tx.statement.create({
-        data: { userId: user.id, fileName: file.name, contentHash, status: "UPLOADED" },
+        data: {
+          userId: user.id,
+          fileName: file.name,
+          contentHash,
+          status: "UPLOADED",
+          blobUrl: blob.url,
+        },
       });
       const job = await tx.job.create({ data: { statementId: statement.id, state: "QUEUED" } });
       return { statement, job };
     }));
   } catch (e) {
-    // P2002 race: a concurrent request already created this (userId, contentHash). Return the
-    // existing row's summary and do NOT enqueue again.
+    // Rows weren't committed → the blob we just stored would be orphaned. Delete it either way.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      // Race: a concurrent request already created this (userId, contentHash).
       const raced = await prisma.statement.findUnique({
         where: { userId_contentHash: { userId: user.id, contentHash } },
       });
-      if (raced) return summarize(raced);
+      if (raced) {
+        await deleteBlob(blob.url);
+        return summarize(raced);
+      }
     }
+    await deleteBlob(blob.url);
     return fail("INTERNAL_ERROR", "Could not process the upload.", 500);
   }
 
-  // Publish AFTER the rows exist. The payload carries ONLY identifiers — NEVER file bytes or
-  // extracted text. Financial data must not transit the external queue; the worker (3C) re-reads
-  // it from our own DB/storage. Worker URL is derived from the request origin (no new env var).
+  // Publish AFTER the rows exist. Payload carries ONLY identifiers — NEVER the blob url, file
+  // bytes, or text. The financial-file reference stays in our DB; the worker (3D) reads blobUrl
+  // from the Statement, fetches, processes, then deletes the blob. Worker URL from request origin.
   const workerUrl = new URL(WORKER_PATH, req.url).toString();
   try {
     await getQStashClient().publishJSON({
@@ -98,17 +117,18 @@ export async function POST(req: Request) {
       body: { statementId: statement.id, jobId: job.id },
     });
   } catch {
-    // Enqueue failed: don't leave a QUEUED job with no message behind it (a silent stuck state).
-    // Mark both FAILED so the failure is visible and retriable, then surface it.
+    // Enqueue failed: mark FAILED AND delete the stored blob so we don't orphan a financial PDF
+    // (storage cost + a needlessly-reachable file) with no message that will ever process it.
     await prisma.$transaction([
       prisma.job.update({ where: { id: job.id }, data: { state: "FAILED", error: "enqueue_failed" } }),
       prisma.statement.update({ where: { id: statement.id }, data: { status: "FAILED" } }),
     ]);
+    await deleteBlob(blob.url);
     return fail("ENQUEUE_FAILED", "Could not queue the statement for processing.", 502);
   }
 
-  // 202 Accepted: the upload was accepted for asynchronous processing, not completed. Nothing is
-  // parsed yet (Job is QUEUED); the worker (3C) does the actual work.
+  // 202 Accepted: accepted for async processing, not completed. Job is QUEUED; the worker (3D)
+  // does the actual work.
   return NextResponse.json(
     { statementId: statement.id, jobId: job.id, status: "queued" },
     { status: 202 },
