@@ -1,23 +1,42 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock the three external boundaries so the handler runs with NO real creds/DB.
+// Mock every external boundary so the handler runs with NO real creds/DB.
 // vi.hoisted keeps the spies available inside the hoisted vi.mock factories.
-const { getCurrentUser, publishJSON, prismaMock } = vi.hoisted(() => ({
-  getCurrentUser: vi.fn(),
-  publishJSON: vi.fn(),
-  prismaMock: {
-    statement: { findUnique: vi.fn(), update: vi.fn() },
-    job: { update: vi.fn() },
-    transaction: { count: vi.fn() },
-    $transaction: vi.fn(),
-  },
-}));
+const {
+  getCurrentUser,
+  publishJSON,
+  putStatementPdf,
+  deleteBlob,
+  statementCreate,
+  jobCreate,
+  prismaMock,
+} = vi.hoisted(() => {
+  const statementCreate = vi.fn();
+  const jobCreate = vi.fn();
+  return {
+    getCurrentUser: vi.fn(),
+    publishJSON: vi.fn(),
+    putStatementPdf: vi.fn(),
+    deleteBlob: vi.fn(),
+    statementCreate,
+    jobCreate,
+    prismaMock: {
+      statement: { findUnique: vi.fn(), update: vi.fn() },
+      job: { update: vi.fn() },
+      transaction: { count: vi.fn() },
+      $transaction: vi.fn(),
+    },
+  };
+});
 
 vi.mock("@/lib/auth", () => ({ getCurrentUser }));
 vi.mock("@/lib/qstash", () => ({ getQStashClient: () => ({ publishJSON }) }));
+vi.mock("@/lib/blob", () => ({ putStatementPdf, deleteBlob }));
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 
 import { POST } from "./route";
+
+const BLOB_URL = "https://blob.example/statements/statement.pdf-abc123.pdf";
 
 function uploadRequest() {
   const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x0a, 0x31]); // "%PDF\n1"
@@ -29,20 +48,20 @@ function uploadRequest() {
 beforeEach(() => {
   vi.clearAllMocks();
   getCurrentUser.mockResolvedValue({ id: "user-1" });
+  putStatementPdf.mockResolvedValue({ url: BLOB_URL, pathname: "statements/statement.pdf-abc123.pdf" });
+  statementCreate.mockResolvedValue({ id: "s1", status: "UPLOADED" });
+  jobCreate.mockResolvedValue({ id: "j1", state: "QUEUED" });
   // Interactive $transaction(cb) => create Statement then Job; array form => Promise.all.
   prismaMock.$transaction.mockImplementation(async (arg) => {
     if (typeof arg === "function") {
-      return arg({
-        statement: { create: vi.fn().mockResolvedValue({ id: "s1", status: "UPLOADED" }) },
-        job: { create: vi.fn().mockResolvedValue({ id: "j1", state: "QUEUED" }) },
-      });
+      return arg({ statement: { create: statementCreate }, job: { create: jobCreate } });
     }
     return Promise.all(arg);
   });
 });
 
-describe("POST /api/statements (enqueue-only)", () => {
-  it("new upload: creates Statement+Job, publishes ids-only, returns 202", async () => {
+describe("POST /api/statements (blob storage + enqueue)", () => {
+  it("new upload: stores blob, saves blobUrl, publishes ids-only, returns 202", async () => {
     prismaMock.statement.findUnique.mockResolvedValue(null);
     publishJSON.mockResolvedValue({ messageId: "m1" });
 
@@ -51,14 +70,21 @@ describe("POST /api/statements (enqueue-only)", () => {
     expect(res.status).toBe(202);
     expect(await res.json()).toEqual({ statementId: "s1", jobId: "j1", status: "queued" });
 
+    // PDF stored exactly once, and the blob URL is persisted on the Statement row.
+    expect(putStatementPdf).toHaveBeenCalledTimes(1);
+    expect(statementCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ status: "UPLOADED", blobUrl: BLOB_URL }),
+    });
+
+    // SECURITY: the queue message carries ONLY identifiers — never the blob url / bytes / text.
     expect(publishJSON).toHaveBeenCalledTimes(1);
     const payload = publishJSON.mock.calls[0][0];
-    // SECURITY + CORRECTNESS: the queue message carries ONLY identifiers — no bytes/text/file.
     expect(payload.body).toEqual({ statementId: "s1", jobId: "j1" });
-    expect(Object.keys(payload.body).sort()).toEqual(["jobId", "statementId"]);
+    expect(payload.body).not.toHaveProperty("blobUrl");
+    expect(payload.body).not.toHaveProperty("url");
   });
 
-  it("duplicate upload: returns existing summary and does NOT enqueue", async () => {
+  it("duplicate upload: does NOT store a blob or enqueue, returns existing summary", async () => {
     prismaMock.statement.findUnique.mockResolvedValue({ id: "s1", status: "PROCESSED" });
     prismaMock.transaction.count.mockResolvedValue(5);
 
@@ -66,10 +92,11 @@ describe("POST /api/statements (enqueue-only)", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ statementId: "s1", status: "PROCESSED", transactionCount: 5 });
+    expect(putStatementPdf).not.toHaveBeenCalled();
     expect(publishJSON).not.toHaveBeenCalled();
   });
 
-  it("publish failure: marks Job+Statement FAILED and returns 502", async () => {
+  it("publish failure: marks Job+Statement FAILED and deletes the blob (no orphan)", async () => {
     prismaMock.statement.findUnique.mockResolvedValue(null);
     publishJSON.mockRejectedValue(new Error("qstash unreachable"));
 
@@ -85,5 +112,6 @@ describe("POST /api/statements (enqueue-only)", () => {
       where: { id: "s1" },
       data: { status: "FAILED" },
     });
+    expect(deleteBlob).toHaveBeenCalledWith(BLOB_URL);
   });
 });

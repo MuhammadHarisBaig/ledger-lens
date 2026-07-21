@@ -72,6 +72,7 @@ model Statement {
   userId       String
   fileName     String // original upload name, for display
   contentHash  String // hash of file bytes, for idempotency
+  blobUrl      String? // Vercel Blob URL of the raw PDF; nulled after the worker deletes it (3D)
   status       StatementStatus @default(UPLOADED)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
