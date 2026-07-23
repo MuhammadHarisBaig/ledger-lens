@@ -1,4 +1,4 @@
-import { put, del } from "@vercel/blob";
+import { put, del, get } from "@vercel/blob";
 import { requireEnv } from "@/lib/env";
 
 /**
@@ -29,6 +29,17 @@ export async function putStatementPdf(
     token: getBlobToken(),
   });
   return { url, pathname };
+}
+
+/**
+ * Download a private statement PDF's bytes (the worker calls this). Private blobs aren't
+ * readable by URL alone, so we fetch through the SDK with the token and drain the stream.
+ */
+export async function fetchStatementPdf(url: string): Promise<Uint8Array> {
+  const res = await get(url, { access: "private", token: getBlobToken() });
+  if (!res) throw new Error("blob_not_found");
+  const buffer = await new Response(res.stream).arrayBuffer();
+  return new Uint8Array(buffer);
 }
 
 export async function deleteBlob(url: string): Promise<void> {
