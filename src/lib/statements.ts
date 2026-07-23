@@ -27,3 +27,15 @@ export function getStatementTransactions(statementId: string) {
 export function getStatementTotal(statementId: string) {
   return prisma.transaction.aggregate({ where: { statementId }, _sum: { amount: true } });
 }
+
+// Ownership-scoped status snapshot for the polling endpoint — null for a non-owner (=> 404).
+export function getOwnedStatementStatus(userId: string, statementId: string) {
+  return prisma.statement.findFirst({
+    where: { id: statementId, userId },
+    select: {
+      status: true,
+      job: { select: { state: true, error: true, attempts: true } },
+      _count: { select: { transactions: true } },
+    },
+  });
+}
