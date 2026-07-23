@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   getCurrentUser,
   publishJSON,
+  limit,
   putStatementPdf,
   deleteBlob,
   statementCreate,
@@ -16,6 +17,7 @@ const {
   return {
     getCurrentUser: vi.fn(),
     publishJSON: vi.fn(),
+    limit: vi.fn(),
     putStatementPdf: vi.fn(),
     deleteBlob: vi.fn(),
     statementCreate,
@@ -31,6 +33,7 @@ const {
 
 vi.mock("@/lib/auth", () => ({ getCurrentUser }));
 vi.mock("@/lib/qstash", () => ({ getQStashClient: () => ({ publishJSON }) }));
+vi.mock("@/lib/rateLimit", () => ({ getUploadLimiter: () => ({ limit }) }));
 vi.mock("@/lib/blob", () => ({ putStatementPdf, deleteBlob }));
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
 
@@ -48,6 +51,7 @@ function uploadRequest() {
 beforeEach(() => {
   vi.clearAllMocks();
   getCurrentUser.mockResolvedValue({ id: "user-1" });
+  limit.mockResolvedValue({ success: true, limit: 10, remaining: 9, reset: Date.now() + 60_000 });
   putStatementPdf.mockResolvedValue({ url: BLOB_URL, pathname: "statements/statement.pdf-abc123.pdf" });
   statementCreate.mockResolvedValue({ id: "s1", status: "UPLOADED" });
   jobCreate.mockResolvedValue({ id: "j1", state: "QUEUED" });
@@ -113,5 +117,30 @@ describe("POST /api/statements (blob storage + enqueue)", () => {
       data: { status: "FAILED" },
     });
     expect(deleteBlob).toHaveBeenCalledWith(BLOB_URL);
+  });
+
+  it("over rate limit: 429 and NO blob store / DB write / enqueue (checked before expensive work)", async () => {
+    limit.mockResolvedValue({ success: false, limit: 10, remaining: 0, reset: Date.now() + 30_000 });
+
+    const res = await POST(uploadRequest());
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
+    // Proves the limit is enforced BEFORE any side-effecting/expensive work.
+    expect(putStatementPdf).not.toHaveBeenCalled();
+    expect(prismaMock.statement.findUnique).not.toHaveBeenCalled();
+    expect(publishJSON).not.toHaveBeenCalled();
+  });
+
+  it("rate limiter unavailable (Redis down): fails open and allows the upload", async () => {
+    limit.mockRejectedValue(new Error("redis unavailable"));
+    prismaMock.statement.findUnique.mockResolvedValue(null);
+    publishJSON.mockResolvedValue({ messageId: "m1" });
+
+    const res = await POST(uploadRequest());
+
+    expect(res.status).toBe(202);
+    expect(putStatementPdf).toHaveBeenCalledTimes(1);
+    expect(publishJSON).toHaveBeenCalledTimes(1);
   });
 });
