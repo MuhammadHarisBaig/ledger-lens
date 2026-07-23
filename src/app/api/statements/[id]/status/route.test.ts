@@ -34,7 +34,7 @@ describe("GET /api/statements/[id]/status", () => {
     expect(getOwnedStatementStatus).toHaveBeenCalledWith("user-B", "s1");
   });
 
-  it("returns the status snapshot for the owner", async () => {
+  it("returns the status snapshot for the owner (no message on success)", async () => {
     getCurrentUser.mockResolvedValue({ id: "user-A" });
     getOwnedStatementStatus.mockResolvedValue({
       status: "PROCESSED",
@@ -46,8 +46,27 @@ describe("GET /api/statements/[id]/status", () => {
     expect(await res.json()).toEqual({
       status: "PROCESSED",
       jobState: "DONE",
-      error: null,
       transactionCount: 5,
+      message: null,
     });
+  });
+
+  // A FAILED job returns a FRIENDLY message — never the raw internal reason code.
+  it("maps a FAILED job to a friendly message, not the raw Job.error", async () => {
+    getCurrentUser.mockResolvedValue({ id: "user-A" });
+    getOwnedStatementStatus.mockResolvedValue({
+      status: "FAILED",
+      job: { state: "FAILED", error: "extract_failed", attempts: 1 },
+      _count: { transactions: 0 },
+    });
+    const res = await statusRequest();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("FAILED");
+    expect(typeof body.message).toBe("string");
+    expect(body.message.length).toBeGreaterThan(0);
+    // the internal reason code must NOT leak to the client
+    expect(JSON.stringify(body)).not.toContain("extract_failed");
+    expect(body).not.toHaveProperty("error");
   });
 });
