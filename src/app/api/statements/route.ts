@@ -69,7 +69,9 @@ export async function POST(req: Request) {
   let blob: { url: string; pathname: string };
   try {
     blob = await putStatementPdf(bytes, file.name);
-  } catch {
+  } catch (e) {
+    // Surface WHY (message only — never bytes/url) so storage failures aren't invisible.
+    console.error("statement upload: blob store failed:", e instanceof Error ? e.message : e);
     return fail("STORAGE_FAILED", "Could not store the uploaded file.", 502);
   }
 
