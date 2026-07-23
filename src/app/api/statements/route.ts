@@ -7,6 +7,7 @@ import { validateUpload, MAX_UPLOAD_BYTES } from "@/lib/validateUpload";
 import { getQStashClient } from "@/lib/qstash";
 import { WORKER_PATH } from "@/lib/queue";
 import { putStatementPdf, deleteBlob } from "@/lib/blob";
+import { getUploadLimiter } from "@/lib/rateLimit";
 
 export const runtime = "nodejs"; // node:crypto + Prisma need the Node runtime, not Edge
 
@@ -28,6 +29,22 @@ async function summarize(s: { id: string; status: string }) {
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return fail("UNAUTHORIZED", "You must be signed in.", 401);
+
+  // Rate limit per user BEFORE any expensive work (buffering the file, Blob, DB, enqueue), so
+  // abusive traffic is rejected cheaply. FAIL-OPEN: a limiter/Redis outage must not block uploads —
+  // enforcing a soft limit is less important than staying available, so on error we allow.
+  try {
+    const { success, reset } = await getUploadLimiter().limit(user.id);
+    if (!success) {
+      const retryAfter = Math.max(1, Math.ceil((reset - Date.now()) / 1000));
+      return NextResponse.json(
+        { error: { code: "RATE_LIMITED", message: "Too many uploads — please slow down." } },
+        { status: 429, headers: { "Retry-After": String(retryAfter) } },
+      );
+    }
+  } catch (e) {
+    console.error("upload rate limiter unavailable (allowing):", e instanceof Error ? e.message : e);
+  }
 
   // cheap pre-read DoS guard: reject on declared Content-Length before buffering the body
   const declaredLength = Number(req.headers.get("content-length") ?? 0);

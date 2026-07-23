@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock every boundary so the worker runs credential-free. vi.hoisted keeps spies available
 // inside the hoisted vi.mock factories.
-const { verify, fetchStatementPdf, deleteBlob, extractPdfText, parseStatement, prismaMock } =
+const { verify, redisSet, redisDel, fetchStatementPdf, deleteBlob, extractPdfText, parseStatement, prismaMock } =
   vi.hoisted(() => ({
     verify: vi.fn(),
+    redisSet: vi.fn(),
+    redisDel: vi.fn(),
     fetchStatementPdf: vi.fn(),
     deleteBlob: vi.fn(),
     extractPdfText: vi.fn(),
@@ -18,6 +20,7 @@ const { verify, fetchStatementPdf, deleteBlob, extractPdfText, parseStatement, p
   }));
 
 vi.mock("@/lib/qstash", () => ({ getQStashReceiver: () => ({ verify }) }));
+vi.mock("@/lib/redis", () => ({ getRedis: () => ({ set: redisSet, del: redisDel }) }));
 vi.mock("@/lib/blob", () => ({ fetchStatementPdf, deleteBlob }));
 vi.mock("@/lib/extractPdfText", () => ({ extractPdfText }));
 vi.mock("@/lib/parseStatement", () => ({ parseStatement }));
@@ -36,6 +39,8 @@ function workerRequest(body: unknown = { statementId: "s1", jobId: "j1" }) {
 beforeEach(() => {
   vi.clearAllMocks();
   prismaMock.$transaction.mockImplementation(async (arg) => Promise.all(arg));
+  redisSet.mockResolvedValue("OK"); // default: dedup marker acquired
+  redisDel.mockResolvedValue(1);
 });
 
 describe("POST /api/worker/process", () => {
@@ -118,5 +123,35 @@ describe("POST /api/worker/process", () => {
       data: { state: "FAILED", error: "blob_fetch_failed" },
     });
     expect(deleteBlob).not.toHaveBeenCalled(); // retry needs the blob
+  });
+
+  it("concurrent double-delivery (Redis marker already held): 200, skipped, no processing", async () => {
+    verify.mockResolvedValue(true);
+    redisSet.mockResolvedValue(null); // another concurrent delivery got the marker first
+
+    const res = await POST(workerRequest());
+
+    expect(res.status).toBe(200);
+    // Sealed before any DB read/work — this is what the atomic SET NX adds over the DB guard.
+    expect(prismaMock.statement.findUnique).not.toHaveBeenCalled();
+    expect(prismaMock.transaction.createMany).not.toHaveBeenCalled();
+  });
+
+  it("Redis down at marker acquire: fails open, still processes once via the DB guard", async () => {
+    verify.mockResolvedValue(true);
+    redisSet.mockRejectedValue(new Error("redis unavailable"));
+    prismaMock.statement.findUnique.mockResolvedValue({ id: "s1", status: "UPLOADED", blobUrl: "blob://x" });
+    fetchStatementPdf.mockResolvedValue(new Uint8Array([0x25]));
+    extractPdfText.mockResolvedValue({ text: "some text", hasText: true, pageCount: 1 });
+    parseStatement.mockReturnValue({
+      transactions: [{ date: new Date("2024-02-03T00:00:00Z"), rawDescription: "UBER", amount: -18.75 }],
+      skippedLines: 1,
+    });
+
+    const res = await POST(workerRequest());
+
+    expect(res.status).toBe(200);
+    expect(prismaMock.transaction.createMany).toHaveBeenCalledTimes(1);
+    expect(prismaMock.statement.update).toHaveBeenCalledWith({ where: { id: "s1" }, data: { status: "PROCESSED" } });
   });
 });
