@@ -91,10 +91,27 @@ model Transaction {
   rawDescription String
   amount         Decimal   @db.Decimal(14, 2) // money as EXACT decimal — never Float
   currency       String    @default("USD")
+  category       TransactionCategory? // null until the LLM categorizes it (see CATEGORY_SCHEMA_VERSION)
   createdAt      DateTime  @default(now())
   statement      Statement @relation(fields: [statementId], references: [id], onDelete: Cascade)
 
   @@index([statementId])
+}
+
+// Fixed, versioned category taxonomy. Kept stable (and version-tagged in code via
+// CATEGORY_SCHEMA_VERSION) so M5's accuracy/F1 metrics compare like-for-like across runs.
+enum TransactionCategory {
+  GROCERIES
+  DINING
+  TRANSPORT
+  UTILITIES
+  RENT
+  INCOME
+  ENTERTAINMENT
+  HEALTH
+  TRANSFER
+  FEES
+  OTHER
 }
 
 // State ownership: Statement.status is the UI-facing lifecycle and the source of truth for
@@ -106,7 +123,8 @@ enum JobState {
   QUEUED
   PROCESSING
   DONE
-  FAILED
+  FAILED // terminal: permanent failure only
+  RETRYING // transient failure awaiting a QStash retry (NOT terminal)
 }
 
 model Job {
