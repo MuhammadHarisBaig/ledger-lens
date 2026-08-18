@@ -7,7 +7,7 @@ import { requireEnv } from "@/lib/env";
 // incompatible label spaces.
 export const CATEGORY_SCHEMA_VERSION = 1;
 
-const MODEL = "gemini-2.5-flash";
+export const MODEL = "gemini-2.5-flash";
 const CATEGORIES = Object.values(TransactionCategory); // enum values are the source of truth
 
 // Approximate per-1M-token pricing for the model (USD) — for a rough cost estimate only; update

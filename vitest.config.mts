@@ -5,6 +5,6 @@ export default defineConfig({
   plugins: [tsconfigPaths()], // makes "@/..." imports resolve in tests
   test: {
     environment: "node", // pure logic needs no browser DOM (jsdom comes later)
-    include: ["src/**/*.test.ts"], // where Vitest looks for tests
+    include: ["src/**/*.test.ts", "eval/**/*.test.ts"], // src + the eval metric-math tests
   },
 });
