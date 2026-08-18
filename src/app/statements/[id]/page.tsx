@@ -50,6 +50,7 @@ export default async function StatementDetailPage({
             <tr className="border-b text-left">
               <th scope="col" className="py-2 pr-4">Date</th>
               <th scope="col" className="py-2 pr-4">Description</th>
+              <th scope="col" className="py-2 pr-4">Category</th>
               <th scope="col" className="py-2 text-right">Amount</th>
             </tr>
           </thead>
@@ -60,13 +61,18 @@ export default async function StatementDetailPage({
                   {t.date.toLocaleDateString()}
                 </td>
                 <td className="py-2 pr-4">{t.rawDescription}</td>
+                <td className="py-2 pr-4">
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-800">
+                    {t.category ?? "—"}
+                  </span>
+                </td>
                 <td className="py-2 text-right tabular-nums">{formatMoney(t.amount)}</td>
               </tr>
             ))}
           </tbody>
           <tfoot>
             <tr className="font-semibold">
-              <td className="py-2 pr-4" colSpan={2}>Total</td>
+              <td className="py-2 pr-4" colSpan={3}>Total</td>
               <td className="py-2 text-right tabular-nums">{formatMoney(total)}</td>
             </tr>
           </tfoot>

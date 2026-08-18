@@ -7,6 +7,7 @@ import { JOB_LOCK_PREFIX, JOB_LOCK_TTL_SECONDS } from "@/lib/redisKeys";
 import { fetchStatementPdf, deleteBlob } from "@/lib/blob";
 import { extractPdfText } from "@/lib/extractPdfText";
 import { parseStatement } from "@/lib/parseStatement";
+import { categorizeTransactions } from "@/lib/categorize";
 
 export const runtime = "nodejs"; // node crypto + Prisma + blob need the Node runtime, not Edge
 
@@ -106,9 +107,10 @@ export async function POST(req: Request) {
     try {
       bytes = await fetchStatementPdf(blobUrl);
     } catch {
+      // TRANSIENT: RETRYING (not FAILED — FAILED is reserved for terminal outcomes).
       await prisma.$transaction([
         prisma.statement.update({ where: { id: statementId }, data: { status: "UPLOADED" } }),
-        prisma.job.update({ where: { statementId }, data: { state: "FAILED", error: "blob_fetch_failed" } }),
+        prisma.job.update({ where: { statementId }, data: { state: "RETRYING", error: "blob_fetch_failed" } }),
       ]);
       return retry();
     }
@@ -140,15 +142,36 @@ export async function POST(req: Request) {
       return ok();
     }
 
-    // SUCCESS — atomic: insert txns + Statement PROCESSED + Job DONE. A DB blip here is TRANSIENT.
+    // CATEGORIZE (stage=categorize). A CALL failure (Gemini down/timeout) is TRANSIENT — reset to
+    // UPLOADED + RETRYING and retry, so the parse isn't lost. A bad RESPONSE never reaches here as
+    // an error: categorizeTransactions validates and defaults invalid entries to OTHER internally.
+    await prisma.job.update({ where: { statementId }, data: { stage: "categorize" } });
+    let categories;
+    let metrics;
+    try {
+      ({ categories, metrics } = await categorizeTransactions(parsed.transactions));
+    } catch {
+      await prisma.$transaction([
+        prisma.statement.update({ where: { id: statementId }, data: { status: "UPLOADED" } }),
+        prisma.job.update({ where: { statementId }, data: { state: "RETRYING", error: "categorize_failed" } }),
+      ]);
+      return retry();
+    }
+    // OBSERVABILITY (M5 seed): metrics + ids only — NEVER transaction contents.
+    console.info(
+      JSON.stringify({ event: "categorize", statementId, jobId, count: parsed.transactions.length, ...metrics }),
+    );
+
+    // SUCCESS — atomic: insert txns WITH categories + Statement PROCESSED + Job DONE. DB blip = TRANSIENT.
     try {
       await prisma.$transaction([
         prisma.transaction.createMany({
-          data: parsed.transactions.map((t) => ({
+          data: parsed.transactions.map((t, i) => ({
             statementId,
             date: t.date,
             rawDescription: t.rawDescription,
             amount: t.amount,
+            category: categories[i],
           })),
         }),
         prisma.statement.update({ where: { id: statementId }, data: { status: "PROCESSED" } }),
@@ -157,7 +180,7 @@ export async function POST(req: Request) {
     } catch {
       await prisma.$transaction([
         prisma.statement.update({ where: { id: statementId }, data: { status: "UPLOADED" } }),
-        prisma.job.update({ where: { statementId }, data: { state: "FAILED", error: "persist_failed" } }),
+        prisma.job.update({ where: { statementId }, data: { state: "RETRYING", error: "persist_failed" } }),
       ]);
       return retry();
     }
