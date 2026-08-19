@@ -9,6 +9,7 @@ import {
   POLL_MAX_ATTEMPTS,
   type StatusSnapshot,
 } from "@/lib/pollStatus";
+import { Button } from "@/components/Button";
 
 type Phase = "idle" | "uploading" | "processing" | "done" | "failed" | "timeout" | "error";
 
@@ -93,18 +94,21 @@ export function UploadForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-3">
-      <label className="flex flex-col gap-1 text-sm">
-        <span>Statement PDF</span>
-        <input type="file" name="file" accept="application/pdf" className="text-sm" />
+    <form onSubmit={onSubmit} className="flex flex-col gap-4">
+      <label className="flex flex-col gap-1.5 text-sm">
+        <span className="font-medium text-fg">Statement PDF</span>
+        <input
+          type="file"
+          name="file"
+          accept="application/pdf"
+          className="rounded-lg border border-border bg-surface-2 text-sm text-fg-muted
+            file:mr-3 file:cursor-pointer file:border-0 file:bg-surface-1 file:px-4 file:py-2.5
+            file:text-sm file:font-medium file:text-fg hover:file:text-accent"
+        />
       </label>
-      <button
-        type="submit"
-        disabled={busy}
-        className="w-fit rounded-full bg-black px-5 py-2 text-white disabled:opacity-50 dark:bg-white dark:text-black"
-      >
+      <Button type="submit" variant="primary" disabled={busy} className="w-fit">
         {phase === "uploading" ? "Uploading…" : phase === "processing" ? "Processing…" : "Upload"}
-      </button>
+      </Button>
 
       {/* status changes announced to assistive tech */}
       <div aria-live="polite" className="flex items-center gap-2 text-sm">
@@ -113,35 +117,33 @@ export function UploadForm() {
             <span
               role="status"
               aria-label="Processing"
-              className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"
+              className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-fg-subtle border-t-transparent"
             />
-            <span className="text-gray-600 dark:text-gray-400">Processing… this runs in the background.</span>
+            <span className="text-fg-muted">Processing… this runs in the background.</span>
           </>
         )}
         {phase === "done" && (
-          <span className="text-green-700 dark:text-green-400">
+          <span className="text-success">
             Processed — {transactionCount} transaction(s).{" "}
             {statementId && (
-              <Link href={`/statements/${statementId}`} className="underline">
+              <Link href={`/statements/${statementId}`} className="font-medium underline hover:text-accent">
                 View statement
               </Link>
             )}
           </span>
         )}
         {phase === "failed" && (
-          <span className="flex items-center gap-3 text-red-600">
+          <span className="flex items-center gap-3 text-danger">
             {message}
-            <button type="button" onClick={reset} className="underline">
+            <button type="button" onClick={reset} className="underline hover:text-fg">
               Try another file
             </button>
           </span>
         )}
         {phase === "timeout" && (
-          <span className="text-gray-600 dark:text-gray-400">
-            Still processing — refresh shortly to see the result.
-          </span>
+          <span className="text-fg-muted">Still processing — refresh shortly to see the result.</span>
         )}
-        {phase === "error" && <span className="text-red-600">{message}</span>}
+        {phase === "error" && <span className="text-danger">{message}</span>}
       </div>
     </form>
   );
