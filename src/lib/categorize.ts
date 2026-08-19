@@ -17,10 +17,15 @@ const OUTPUT_USD_PER_1M = 2.5;
 
 export type TxnForCategorize = { date: Date; rawDescription: string; amount: number };
 
+// Controls the model's "thinking" budget: 0 = OFF, -1 = AUTOMATIC, omit = model default.
+// Default (omitted) preserves the current behavior — the worker calls with no options.
+export type CategorizeOptions = { thinkingBudget?: number };
+
 export type CategorizeMetrics = {
   latencyMs: number;
   promptTokens?: number;
   candidatesTokens?: number;
+  thoughtsTokens?: number; // "thinking" tokens — bill at the OUTPUT rate (see estimateCostUsd)
   totalTokens?: number;
   costEstimateUsd?: number;
   schemaVersion: number;
@@ -47,9 +52,13 @@ function buildPrompt(txns: TxnForCategorize[]): string {
   ].join("\n");
 }
 
-function estimateCostUsd(prompt?: number, candidates?: number): number | undefined {
-  if (prompt === undefined && candidates === undefined) return undefined;
-  return ((prompt ?? 0) * INPUT_USD_PER_1M + (candidates ?? 0) * OUTPUT_USD_PER_1M) / 1_000_000;
+// GOTCHA: "thinking" (thoughts) tokens bill at the OUTPUT rate but are NOT part of
+// candidatesTokenCount, so costing output as candidates-only understates the bill (often by >half).
+// Callers pass the FULL billable output (candidates + thoughts + tool-use), computed as
+// totalTokenCount - promptTokenCount.
+function estimateCostUsd(promptTokens?: number, outputTokens?: number): number | undefined {
+  if (promptTokens === undefined && outputTokens === undefined) return undefined;
+  return ((promptTokens ?? 0) * INPUT_USD_PER_1M + (outputTokens ?? 0) * OUTPUT_USD_PER_1M) / 1_000_000;
 }
 
 const llmSchema = z.array(z.object({ index: z.number().int(), category: z.string() }));
@@ -68,23 +77,38 @@ const toCategory = (s: string): TransactionCategory =>
  */
 export async function categorizeTransactions(
   txns: TxnForCategorize[],
+  options?: CategorizeOptions,
 ): Promise<{ categories: TransactionCategory[]; metrics: CategorizeMetrics }> {
   const client = getGeminiClient();
   const start = Date.now();
   const res = await client.models.generateContent({
     model: MODEL,
     contents: buildPrompt(txns),
-    config: { temperature: 0, responseMimeType: "application/json" },
+    config: {
+      temperature: 0,
+      responseMimeType: "application/json",
+      // Only set thinkingConfig when a budget is given, so the default call is unchanged.
+      ...(options?.thinkingBudget !== undefined
+        ? { thinkingConfig: { thinkingBudget: options.thinkingBudget } }
+        : {}),
+    },
   });
   const latencyMs = Date.now() - start;
 
   const usage = res.usageMetadata;
+  // Billable output = everything the model generated = total - prompt (captures candidates +
+  // thoughts + any tool-use). Fall back to candidates+thoughts if total/prompt aren't reported.
+  const billableOutputTokens =
+    usage?.totalTokenCount !== undefined && usage?.promptTokenCount !== undefined
+      ? usage.totalTokenCount - usage.promptTokenCount
+      : (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0);
   const metrics: CategorizeMetrics = {
     latencyMs,
     promptTokens: usage?.promptTokenCount,
     candidatesTokens: usage?.candidatesTokenCount,
+    thoughtsTokens: usage?.thoughtsTokenCount,
     totalTokens: usage?.totalTokenCount,
-    costEstimateUsd: estimateCostUsd(usage?.promptTokenCount, usage?.candidatesTokenCount),
+    costEstimateUsd: estimateCostUsd(usage?.promptTokenCount, billableOutputTokens),
     schemaVersion: CATEGORY_SCHEMA_VERSION,
   };
 

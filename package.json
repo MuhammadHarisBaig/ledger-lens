@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "eval": "dotenv -e .env.local -- tsx eval/run.ts",
+    "eval:nothink": "dotenv -e .env.local -- tsx eval/run.ts --no-thinking",
     "postinstall": "prisma generate",
     "db:migrate": "dotenv -e .env.local -- prisma migrate dev",
     "db:studio": "dotenv -e .env.local -- prisma studio"

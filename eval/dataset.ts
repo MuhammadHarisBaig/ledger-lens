@@ -82,4 +82,47 @@ export const dataset: EvalExample[] = [
   { rawDescription: "AMZN MKTP US*2R4TY", amount: -63.24, expectedCategory: "OTHER" }, // ambiguous: could be many things
   { rawDescription: "BRIGHT HORIZON DONATION", amount: -25.0, expectedCategory: "OTHER" },
   { rawDescription: "GENERAL STORE 8841 MISC", amount: -19.99, expectedCategory: "OTHER" },
+
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+  // ADVERSARIAL / AMBIGUOUS cases (5A.1). These are the transactions a real statement actually
+  // contains and that a model can plausibly get wrong: payment-aggregator strings that hide the
+  // real merchant, big-box stores that could be GROCERIES or OTHER, gas-station convenience buys,
+  // cryptic bank/POS codes with weak signal, refunds (money IN but not income), and a fee dressed
+  // up like a purchase. A discriminating eval MUST include failable cases — see eval/README.md.
+  // Labels are the most defensible call; judgment calls are noted.
+  // ─────────────────────────────────────────────────────────────────────────────────────────
+
+  // Aggregator obfuscation — the real merchant is behind a processor prefix (SQ */PAYPAL */SP *).
+  { rawDescription: "SQ *BLUE BOTTLE", amount: -5.25, expectedCategory: "DINING" }, // Square; coffee
+  { rawDescription: "PAYPAL *STEAMGAMES", amount: -19.99, expectedCategory: "ENTERTAINMENT" },
+  { rawDescription: "PAYPAL *RIDEHAILCO", amount: -23.1, expectedCategory: "TRANSPORT" },
+  { rawDescription: "SP * NORTHWIND GOODS", amount: -34.5, expectedCategory: "OTHER" }, // Stripe "SP *", no signal
+  { rawDescription: "VENMO *CASHOUT", amount: 85.0, expectedCategory: "TRANSFER" }, // money IN, but a transfer — NOT income
+
+  // Warehouse / big-box — defensible either way; we commit to a call and let the metric show confusion.
+  { rawDescription: "COSTCO WHSE #0455", amount: -214.83, expectedCategory: "GROCERIES" }, // judgment: warehouse ≈ groceries (could be OTHER)
+  { rawDescription: "WM SUPERCENTER #12", amount: -88.1, expectedCategory: "GROCERIES" }, // judgment: supercenter grocery
+  { rawDescription: "TARGET T-2245", amount: -63.4, expectedCategory: "OTHER" }, // judgment: general merch, not clearly groceries
+  { rawDescription: "AMZN MKTP US*A1B2C3", amount: -47.99, expectedCategory: "OTHER" }, // judgment: ambiguous marketplace
+
+  // Gas-station convenience — bought snacks, but the merchant is a fuel stop.
+  { rawDescription: "SHELL SERVICE STN SNACKS", amount: -12.4, expectedCategory: "TRANSPORT" }, // judgment: gas-station → TRANSPORT
+  { rawDescription: "CIRCLE K #772", amount: -8.75, expectedCategory: "TRANSPORT" }, // judgment: convenience at fuel stop
+
+  // Cryptic bank/POS codes — almost no merchant signal.
+  { rawDescription: "POS DEBIT 7788 234109", amount: -54.2, expectedCategory: "OTHER" },
+  { rawDescription: "CHECKCARD 0912 SP AFF*", amount: -29.0, expectedCategory: "OTHER" },
+
+  // Refunds — positive amount, but the category still follows the merchant, not the sign.
+  { rawDescription: "REFUND GREENLEAF MARKET", amount: 84.32, expectedCategory: "GROCERIES" },
+  { rawDescription: "RETURN CR TUNEWAVE", amount: 10.99, expectedCategory: "ENTERTAINMENT" },
+
+  // Fees that read like purchases/subscriptions.
+  { rawDescription: "ANNUAL MEMBERSHIP FEE", amount: -95.0, expectedCategory: "FEES" }, // card fee, not a purchase
+  { rawDescription: "SVC CHARGE", amount: -4.0, expectedCategory: "FEES" },
+
+  // App-store / media billing, and the UBER-vs-UBER-EATS trap.
+  { rawDescription: "APPLE.COM/BILL", amount: -2.99, expectedCategory: "ENTERTAINMENT" }, // judgment: app/media billing
+  { rawDescription: "GOOGLE *YOUTUBEPREMIUM", amount: -13.99, expectedCategory: "ENTERTAINMENT" },
+  { rawDescription: "UBER EATS 8842", amount: -28.75, expectedCategory: "DINING" }, // trap: NOT transport
 ];
