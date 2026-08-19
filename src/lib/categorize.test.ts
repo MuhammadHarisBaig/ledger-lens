@@ -49,6 +49,39 @@ describe("categorizeTransactions", () => {
     expect(metrics.schemaVersion).toBe(1);
   });
 
+  it("counts thinking (thoughts) tokens in the cost, not candidates alone", async () => {
+    // Thoughts bill at the OUTPUT rate: billable output = total - prompt = 200 - 100 = 100
+    // (candidates 20 + thoughts 80), NOT just candidates 20 — that's the cost bug this locks.
+    generateContent.mockResolvedValue({
+      text: JSON.stringify([{ index: 0, category: "GROCERIES" }, { index: 1, category: "INCOME" }]),
+      usageMetadata: {
+        promptTokenCount: 100,
+        candidatesTokenCount: 20,
+        thoughtsTokenCount: 80,
+        totalTokenCount: 200,
+      },
+    });
+
+    const { metrics } = await categorizeTransactions(txns);
+
+    expect(metrics.thoughtsTokens).toBe(80);
+    // (100 input * 0.3 + 100 output * 2.5) / 1e6 — output includes the 80 thinking tokens.
+    expect(metrics.costEstimateUsd).toBeCloseTo((100 * 0.3 + 100 * 2.5) / 1_000_000, 12);
+  });
+
+  it("passes thinkingBudget through to the SDK config when set (and omits it when not)", async () => {
+    generateContent.mockResolvedValue({
+      text: JSON.stringify([{ index: 0, category: "GROCERIES" }]),
+      usageMetadata: undefined,
+    });
+
+    await categorizeTransactions(txns, { thinkingBudget: 0 });
+    expect(generateContent.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingBudget: 0 });
+
+    await categorizeTransactions(txns); // default: no options → no thinkingConfig (unchanged behavior)
+    expect(generateContent.mock.calls[1][0].config.thinkingConfig).toBeUndefined();
+  });
+
   // THE key robustness test: bad model output must never crash the pipeline.
   it("defaults to OTHER on malformed JSON and never throws", async () => {
     generateContent.mockResolvedValue({ text: "not json {", usageMetadata: undefined });
