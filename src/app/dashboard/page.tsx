@@ -1,28 +1,25 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { signOut } from "@/auth";
+import { AppShell } from "@/components/AppShell";
+import { Card } from "@/components/Card";
+import { PageHeader } from "@/components/PageHeader";
+import { Button } from "@/components/Button";
 
 export default async function DashboardPage() {
   const user = await requireUser(); // redirects to sign-in if not authenticated
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8 text-center">
-      <h1 className="text-3xl font-bold">Dashboard</h1>
-      <p>
-        Signed in as {user.name} ({user.email})
-      </p>
-      <Link href="/statements" className="underline">
-        Go to statements →
-      </Link>
-      <form
-        action={async () => {
-          "use server";
-          await signOut({ redirectTo: "/" });
-        }}
-      >
-        <button type="submit" className="rounded-full border px-5 py-2.5">
-          Sign out
-        </button>
-      </form>
-    </main>
+    <AppShell user={user}>
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Dashboard" subtitle={`Signed in as ${user.name ?? user.email}`} />
+        <Card className="flex flex-col items-start gap-4 p-6">
+          <p className="text-sm text-fg-muted">
+            Upload bank or credit-card statements to parse and categorize their transactions.
+          </p>
+          <Link href="/statements">
+            <Button variant="primary">Go to statements →</Button>
+          </Link>
+        </Card>
+      </div>
+    </AppShell>
   );
 }

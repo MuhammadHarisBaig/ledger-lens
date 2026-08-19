@@ -1,26 +1,44 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* Design tokens — the single source of truth for the fintech dark theme. Defining --color-*
+   tokens here (Tailwind v4 @theme) auto-generates the matching bg-/text-/border- utilities. */
+@theme {
+  /* Surfaces: a soft near-black canvas with slightly lighter card/raised surfaces (not pure black). */
+  --color-surface-0: #0a0a0b; /* app canvas */
+  --color-surface-1: #141416; /* cards */
+  --color-surface-2: #1c1c1f; /* raised: inputs, chips, bar tracks */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  /* Hairline border. */
+  --color-border: #27272a;
+
+  /* Foreground text: primary / secondary / muted. Named fg* so utilities read text-fg-muted
+     (not a doubled text-text-*). */
+  --color-fg: #fafafa;
+  --color-fg-muted: #a1a1aa;
+  --color-fg-subtle: #71717a;
+
+  /* Accents: a single teal/emerald (financial = trust) + a blue secondary. */
+  --color-accent: #10b981;
+  --color-accent-hover: #0e9f6e;
+  --color-accent-blue: #3b82f6;
+
+  /* Semantic. */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background: var(--color-surface-0);
+  color: var(--color-fg);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Consistent keyboard-focus affordance on every interactive element. */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
