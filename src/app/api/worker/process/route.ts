@@ -149,7 +149,12 @@ export async function POST(req: Request) {
     let categories;
     let metrics;
     try {
-      ({ categories, metrics } = await categorizeTransactions(parsed.transactions));
+      // Thinking disabled for this classifier. The eval (eval/report.md vs eval/report-nothinking.md)
+      // measured identical macro-F1 with thinking ON (96.3%) vs OFF (96.4%), while OFF cut latency
+      // ~53% and cost ~55% — so thinking is pure cost/latency here. Decision made on measured
+      // evidence, not a guess. Still a call-site param (not hardcoded inside categorizeTransactions),
+      // so it stays overridable.
+      ({ categories, metrics } = await categorizeTransactions(parsed.transactions, { thinkingBudget: 0 }));
     } catch {
       await prisma.$transaction([
         prisma.statement.update({ where: { id: statementId }, data: { status: "UPLOADED" } }),
