@@ -6,6 +6,8 @@ import { AppShell } from "@/components/AppShell";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
+import { Reveal } from "@/components/motion/Reveal";
+import { Stagger, StaggerItem } from "@/components/motion/Stagger";
 
 export default async function StatementsPage() {
   const user = await requireUser();
@@ -13,7 +15,7 @@ export default async function StatementsPage() {
 
   return (
     <AppShell user={user}>
-      <div className="flex flex-col gap-8">
+      <Reveal className="flex flex-col gap-8">
         <PageHeader
           title="Statements"
           subtitle="Upload a statement PDF to parse and categorize its transactions."
@@ -45,9 +47,13 @@ export default async function StatementsPage() {
                     <th scope="col" className="px-4 py-3 font-medium">Uploaded</th>
                   </tr>
                 </thead>
-                <tbody>
+                <Stagger as="tbody">
                   {statements.map((s) => (
-                    <tr key={s.id} className="border-b border-border last:border-0 hover:bg-surface-2/40">
+                    <StaggerItem
+                      as="tr"
+                      key={s.id}
+                      className="border-b border-border transition-colors last:border-0 motion-safe:hover:bg-white/5"
+                    >
                       <td className="px-4 py-3">
                         <Link href={`/statements/${s.id}`} className="text-fg hover:text-accent">
                           {s.fileName}
@@ -60,14 +66,14 @@ export default async function StatementsPage() {
                         {s._count.transactions}
                       </td>
                       <td className="px-4 py-3 text-fg-muted">{s.createdAt.toLocaleDateString()}</td>
-                    </tr>
+                    </StaggerItem>
                   ))}
-                </tbody>
+                </Stagger>
               </table>
             </Card>
           )}
         </section>
-      </div>
+      </Reveal>
     </AppShell>
   );
 }
