@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { signOut } from "@/auth";
+import { SubmitButton } from "@/components/SubmitButton";
 
 type ShellUser = { name?: string | null; email?: string | null };
 
@@ -38,12 +39,9 @@ export function AppShell({ user, children }: { user: ShellUser; children: ReactN
                 await signOut({ redirectTo: "/" });
               }}
             >
-              <button
-                type="submit"
-                className="rounded-lg border border-border px-3 py-1.5 text-sm text-fg-muted transition-colors hover:border-fg-subtle hover:text-fg"
-              >
+              <SubmitButton variant="secondary" size="sm" pendingLabel="Signing out…">
                 Sign out
-              </button>
+              </SubmitButton>
             </form>
           </div>
         </div>

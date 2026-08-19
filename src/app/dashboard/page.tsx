@@ -4,12 +4,13 @@ import { AppShell } from "@/components/AppShell";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/Button";
+import { Reveal } from "@/components/motion/Reveal";
 
 export default async function DashboardPage() {
   const user = await requireUser(); // redirects to sign-in if not authenticated
   return (
     <AppShell user={user}>
-      <div className="flex flex-col gap-6">
+      <Reveal className="flex flex-col gap-6">
         <PageHeader title="Dashboard" subtitle={`Signed in as ${user.name ?? user.email}`} />
         <Card className="flex flex-col items-start gap-4 p-6">
           <p className="text-sm text-fg-muted">
@@ -19,7 +20,7 @@ export default async function DashboardPage() {
             <Button variant="primary">Go to statements →</Button>
           </Link>
         </Card>
-      </div>
+      </Reveal>
     </AppShell>
   );
 }

@@ -10,6 +10,7 @@ import {
   type StatusSnapshot,
 } from "@/lib/pollStatus";
 import { Button } from "@/components/Button";
+import { Spinner } from "@/components/Spinner";
 
 type Phase = "idle" | "uploading" | "processing" | "done" | "failed" | "timeout" | "error";
 
@@ -106,7 +107,7 @@ export function UploadForm() {
             file:text-sm file:font-medium file:text-fg hover:file:text-accent"
         />
       </label>
-      <Button type="submit" variant="primary" disabled={busy} className="w-fit">
+      <Button type="submit" variant="primary" loading={busy} className="w-fit">
         {phase === "uploading" ? "Uploading…" : phase === "processing" ? "Processing…" : "Upload"}
       </Button>
 
@@ -114,11 +115,7 @@ export function UploadForm() {
       <div aria-live="polite" className="flex items-center gap-2 text-sm">
         {phase === "processing" && (
           <>
-            <span
-              role="status"
-              aria-label="Processing"
-              className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-fg-subtle border-t-transparent"
-            />
+            <Spinner size={16} label="Processing" className="text-fg-subtle" />
             <span className="text-fg-muted">Processing… this runs in the background.</span>
           </>
         )}

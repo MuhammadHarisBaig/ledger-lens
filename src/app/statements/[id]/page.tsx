@@ -15,6 +15,9 @@ import { MetricCard } from "@/components/MetricCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { CategoryBadge } from "@/components/CategoryBadge";
 import { Money } from "@/components/Money";
+import { Reveal } from "@/components/motion/Reveal";
+import { Stagger, StaggerItem } from "@/components/motion/Stagger";
+import { CategoryBar } from "@/components/motion/CategoryBar";
 
 export default async function StatementDetailPage({
   params,
@@ -44,7 +47,7 @@ export default async function StatementDetailPage({
 
   return (
     <AppShell user={user}>
-      <div className="flex flex-col gap-6">
+      <Reveal className="flex flex-col gap-6">
         <PageHeader
           title={statement.fileName}
           subtitle={`${transactions.length} transaction(s)`}
@@ -59,17 +62,23 @@ export default async function StatementDetailPage({
           </Card>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <MetricCard label="Income" tone="success">
-                <Money value={totalIncome} />
-              </MetricCard>
-              <MetricCard label="Spending" tone="danger">
-                <Money value={totalSpending.negated()} />
-              </MetricCard>
-              <MetricCard label="Net" tone={total.isNegative() ? "danger" : "success"}>
-                <Money value={total} />
-              </MetricCard>
-            </div>
+            <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StaggerItem>
+                <MetricCard label="Income" tone="success">
+                  <Money value={totalIncome} />
+                </MetricCard>
+              </StaggerItem>
+              <StaggerItem>
+                <MetricCard label="Spending" tone="danger">
+                  <Money value={totalSpending.negated()} />
+                </MetricCard>
+              </StaggerItem>
+              <StaggerItem>
+                <MetricCard label="Net" tone={total.isNegative() ? "danger" : "success"}>
+                  <Money value={total} />
+                </MetricCard>
+              </StaggerItem>
+            </Stagger>
 
             <section aria-labelledby="breakdown-heading" className="flex flex-col gap-3">
               <h2 id="breakdown-heading" className="text-sm font-semibold uppercase tracking-wide text-fg-subtle">
@@ -77,13 +86,13 @@ export default async function StatementDetailPage({
               </h2>
               <Card className="flex flex-col gap-5 p-5">
                 {spending.length > 0 ? (
-                  <div className="flex flex-col gap-4">
+                  <Stagger className="flex flex-col gap-4">
                     {spending.map((b) => {
                       const pct = totalSpending.isZero()
                         ? 0
                         : b.total.abs().div(totalSpending).times(100).toNumber();
                       return (
-                        <div key={b.category} className="flex flex-col gap-1.5">
+                        <StaggerItem key={b.category} className="flex flex-col gap-1.5">
                           <div className="flex items-center justify-between text-sm">
                             <CategoryBadge category={b.category} />
                             <span className="text-fg-muted">
@@ -91,16 +100,11 @@ export default async function StatementDetailPage({
                             </span>
                           </div>
                           {/* decorative bar (share of total spending); figures are the source of truth */}
-                          <div aria-hidden className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
-                            <div
-                              className="h-full rounded-full"
-                              style={{ width: `${pct}%`, backgroundColor: categoryColor(b.category) }}
-                            />
-                          </div>
-                        </div>
+                          <CategoryBar pct={pct} color={categoryColor(b.category)} />
+                        </StaggerItem>
                       );
                     })}
-                  </div>
+                  </Stagger>
                 ) : (
                   <p className="text-sm text-fg-muted">No spending in this statement.</p>
                 )}
@@ -135,9 +139,13 @@ export default async function StatementDetailPage({
                       <th scope="col" className="px-4 py-3 text-right font-medium">Amount</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <Stagger as="tbody">
                     {transactions.map((t) => (
-                      <tr key={t.id} className="border-b border-border last:border-0">
+                      <StaggerItem
+                        as="tr"
+                        key={t.id}
+                        className="border-b border-border transition-colors last:border-0 motion-safe:hover:bg-white/5"
+                      >
                         <td className="whitespace-nowrap px-4 py-3 text-fg-muted">
                           {t.date.toLocaleDateString()}
                         </td>
@@ -148,9 +156,9 @@ export default async function StatementDetailPage({
                         <td className="px-4 py-3 text-right">
                           <Money value={t.amount} />
                         </td>
-                      </tr>
+                      </StaggerItem>
                     ))}
-                  </tbody>
+                  </Stagger>
                   <tfoot>
                     <tr className="border-t border-border font-semibold">
                       <td className="px-4 py-3" colSpan={3}>Total</td>
@@ -164,7 +172,7 @@ export default async function StatementDetailPage({
             </section>
           </>
         )}
-      </div>
+      </Reveal>
     </AppShell>
   );
 }

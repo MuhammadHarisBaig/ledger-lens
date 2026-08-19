@@ -17,14 +17,11 @@ function Icon({ icon }: { icon: StatusIcon }) {
         </svg>
       );
     case "spinner":
-      return (
-        <span
-          className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-current border-t-transparent"
-        />
-      );
+      return <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-current border-t-transparent" />;
     case "clock":
     default:
-      return <span className="inline-block h-2 w-2 rounded-full bg-current" />;
+      // Queued: a gently pulsing dot (settles static under prefers-reduced-motion).
+      return <span className="inline-block h-2 w-2 rounded-full bg-current motion-safe:animate-pulse" />;
   }
 }
 

@@ -32,7 +32,13 @@
 }
 
 body {
-  background: var(--color-surface-0);
+  /* Depth: a faint emerald glow over a near-black base (calm — no neon/rainbow). Fixed so it
+     doesn't scroll with content. */
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(16, 185, 129, 0.1), transparent 60%),
+    #0a0b0d;
+  background-attachment: fixed;
+  min-height: 100vh;
   color: var(--color-fg);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
@@ -41,4 +47,21 @@ body {
 *:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/* Shimmer sweep for skeleton loaders. */
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
