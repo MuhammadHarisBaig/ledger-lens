@@ -84,6 +84,8 @@ describe("POST /api/worker/process", () => {
     const res = await POST(workerRequest());
 
     expect(res.status).toBe(200);
+    // Eval-driven default: the worker disables model thinking for categorization.
+    expect(categorizeTransactions).toHaveBeenCalledWith(expect.any(Array), { thinkingBudget: 0 });
     expect(prismaMock.transaction.createMany).toHaveBeenCalledWith({
       data: [
         { statementId: "s1", date: expect.any(Date), rawDescription: "STARBUCKS", amount: -5.5, category: "DINING" },
